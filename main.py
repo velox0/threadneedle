@@ -5,7 +5,7 @@ import sys
 import redis
 
 from ct_stream import run_ct_stream
-from worker import run_worker, PROCESSED_SET
+from worker import run_worker, process, PROCESSED_SET
 
 def main():
     parser = argparse.ArgumentParser(description="Threat Infrastructure Graphing Stack")
@@ -13,6 +13,11 @@ def main():
         "--rescan",
         action="store_true",
         help="Re-scan all previously processed targets to detect infrastructure changes"
+    )
+    parser.add_argument(
+        "--target",
+        type=str,
+        help="Scan a specific domain or IP and add it to the graph"
     )
     parser.add_argument(
         "--workers",
@@ -25,7 +30,14 @@ def main():
     WORKER_COUNT = args.workers
     processes = []
 
-    if args.rescan:
+    if args.target:
+        # Single target mode: scan one domain/IP directly
+        mode_str = "Re-scanning" if args.rescan else "Scanning"
+        print(f"[*] {mode_str} single target: {args.target}")
+        process(args.target, rescan=args.rescan)
+        print("[✓] Done.")
+
+    elif args.rescan:
         # Rescan mode: re-queue all previously processed IPs
         r = redis.Redis(host="localhost", port=6379)
         processed = r.smembers(PROCESSED_SET)

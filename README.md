@@ -240,10 +240,11 @@ This will:
 
 ### CLI Flags
 
-| Flag              | Description                                     |
-| ----------------- | ----------------------------------------------- |
-| `--rescan`        | Re-scan all known targets for changes           |
-| `--workers N`     | Number of parallel worker processes (default: 3) |
+| Flag              | Description                                      |
+| ----------------- | ------------------------------------------------ |
+| `--target <host>` | Scan a specific domain or IP and add to the graph |
+| `--rescan`        | Re-scan all known targets for changes            |
+| `--workers N`     | Number of parallel worker processes (default: 3)  |
 
 ---
 
