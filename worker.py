@@ -4,6 +4,9 @@ import requests
 import redis
 import mmh3
 import subprocess
+import urllib3
+
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 from neo4j import GraphDatabase
 from rich.console import Console
