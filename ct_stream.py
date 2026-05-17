@@ -121,6 +121,10 @@ def tail_log(log_info):
                     if domain.startswith("*."):
                         domain = domain[2:]
 
+                    # Skip if this domain was already processed
+                    if r.sismember("processed", domain):
+                        continue
+
                     console.print(
                         f"[bold green]✨ CT [{log_name}]:[/bold green] {domain}"
                     )

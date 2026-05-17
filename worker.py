@@ -5,6 +5,7 @@ import redis
 import mmh3
 import subprocess
 import urllib3
+import json
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -25,6 +26,41 @@ HEADERS = {
     "User-Agent": "Mozilla/5.0"
 }
 
+# Redis keys
+PROCESSED_SET = "processed"   # set of all IPs we've already scanned
+RESCAN_MODE = False           # toggled by main.py when --rescan is used
+
+
+def is_processed(ip):
+    """Check if this IP has already been scanned."""
+    return r.sismember(PROCESSED_SET, ip)
+
+
+def mark_processed(ip):
+    """Mark an IP as scanned."""
+    r.sadd(PROCESSED_SET, ip)
+
+
+def get_existing_data(ip):
+    """Query Neo4j for all existing relationships for this IP."""
+    query = """
+    MATCH (x:Entity {value: $ip, type: 'ip'})-[rel:REL]->(y)
+    RETURN rel.type AS rel_type, y.value AS value
+    """
+    existing = {}
+    with neo.session() as s:
+        result = s.run(query, ip=ip)
+        for record in result:
+            existing[record["rel_type"]] = record["value"]
+    return existing
+
+
+def report_change(ip, field, old_val, new_val):
+    """Print a clear change report for a single field."""
+    console.print(f"   [bold red]⚠ CHANGE[/bold red] [{field}]")
+    console.print(f"      [dim red]  old:[/dim red] {old_val}")
+    console.print(f"      [dim green]  new:[/dim green] {new_val}")
+
 
 def add_relation(a, atype, rel, b, btype):
 
@@ -43,6 +79,18 @@ def add_relation(a, atype, rel, b, btype):
             btype=btype,
             rel=rel
         )
+
+
+def update_relation(ip, rel_type, old_value, new_value, new_btype):
+    """Remove old relationship and create new one when a value changes."""
+    delete_query = """
+    MATCH (x:Entity {value: $ip, type: 'ip'})-[rel:REL {type: $rel_type}]->(y:Entity {value: $old_val})
+    DELETE rel
+    """
+    with neo.session() as s:
+        s.run(delete_query, ip=ip, rel_type=rel_type, old_val=old_value)
+
+    add_relation(ip, "ip", rel_type, new_value, new_btype)
 
 
 def asn_lookup(ip):
@@ -162,7 +210,7 @@ def scan_ports(ip):
         return None
 
 
-def process(target_val):
+def process(target_val, rescan=False):
     try:
         # Check if target is already an IP
         ipaddress.ip_address(target_val)
@@ -177,30 +225,71 @@ def process(target_val):
         except:
             # Drop if it doesn't resolve
             return
-            
-    console.print(f"[bold cyan]🔍 Scanning Target:[/bold cyan] {ip} {f'[dim](from {domain})[/dim]' if domain else ''}")
 
+    # Deduplication: skip already-processed IPs in normal mode
+    if not rescan and is_processed(ip):
+        return
+
+    # In rescan mode, grab existing data for change comparison
+    existing = {}
+    if rescan:
+        existing = get_existing_data(ip)
+        console.print(f"[bold yellow]🔄 Re-scanning:[/bold yellow] {ip} {f'[dim](from {domain})[/dim]' if domain else ''}")
+    else:
+        console.print(f"[bold cyan]🔍 Scanning Target:[/bold cyan] {ip} {f'[dim](from {domain})[/dim]' if domain else ''}")
+
+    changes_found = 0
+
+    # --- ASN ---
     asn = asn_lookup(ip)
     if asn:
-        console.print(f"   [yellow]🏢 ASN:[/yellow] {asn}")
-        add_relation(ip, "ip", "hosted_on", asn, "asn")
+        if rescan and "hosted_on" in existing and existing["hosted_on"] != asn:
+            report_change(ip, "ASN", existing["hosted_on"], asn)
+            update_relation(ip, "hosted_on", existing["hosted_on"], asn, "asn")
+            changes_found += 1
+        else:
+            if not rescan:
+                console.print(f"   [yellow]🏢 ASN:[/yellow] {asn}")
+            add_relation(ip, "ip", "hosted_on", asn, "asn")
 
+    # --- TLS ---
     tls = tls_fingerprint(ip)
     if tls:
         cipher = str(tls["cipher"])
-        console.print(f"   [magenta]🔒 TLS Cipher:[/magenta] {cipher}")
-        add_relation(ip, "ip", "tls_cipher", cipher, "tls")
+        if rescan and "tls_cipher" in existing and existing["tls_cipher"] != cipher:
+            report_change(ip, "TLS Cipher", existing["tls_cipher"], cipher)
+            update_relation(ip, "tls_cipher", existing["tls_cipher"], cipher, "tls")
+            changes_found += 1
+        else:
+            if not rescan:
+                console.print(f"   [magenta]🔒 TLS Cipher:[/magenta] {cipher}")
+            add_relation(ip, "ip", "tls_cipher", cipher, "tls")
 
+    # --- Favicon ---
     fav = favicon_hash(ip)
     if fav:
-        console.print(f"   [green]🖼️ Favicon Hash:[/green] {fav}")
-        add_relation(ip, "ip", "favicon_hash", fav, "favicon")
+        if rescan and "favicon_hash" in existing and existing["favicon_hash"] != fav:
+            report_change(ip, "Favicon Hash", existing["favicon_hash"], fav)
+            update_relation(ip, "favicon_hash", existing["favicon_hash"], fav, "favicon")
+            changes_found += 1
+        else:
+            if not rescan:
+                console.print(f"   [green]🖼️ Favicon Hash:[/green] {fav}")
+            add_relation(ip, "ip", "favicon_hash", fav, "favicon")
 
+    # --- HTTP Server ---
     http = http_fingerprint(ip)
     if http and http["server"]:
-        console.print(f"   [blue]🌐 HTTP Server:[/blue] {http['server']}")
-        add_relation(ip, "ip", "server", http["server"], "http")
+        if rescan and "server" in existing and existing["server"] != http["server"]:
+            report_change(ip, "HTTP Server", existing["server"], http["server"])
+            update_relation(ip, "server", existing["server"], http["server"], "http")
+            changes_found += 1
+        else:
+            if not rescan:
+                console.print(f"   [blue]🌐 HTTP Server:[/blue] {http['server']}")
+            add_relation(ip, "ip", "server", http["server"], "http")
 
+    # --- Nmap ---
     scan = scan_ports(ip)
     if scan:
         open_ports = []
@@ -209,17 +298,34 @@ def process(target_val):
                 parts = line.split()
                 if len(parts) >= 3:
                     open_ports.append(f"{parts[0]} ({parts[2]})")
-        
-        if open_ports:
-            console.print(f"   [red]🚪 Open Ports:[/red] {', '.join(open_ports)}")
 
-def run_worker():
-    console.print("[bold cyan][*] Worker started, waiting for targets...[/bold cyan]")
+        if open_ports:
+            if not rescan:
+                console.print(f"   [red]🚪 Open Ports:[/red] {', '.join(open_ports)}")
+
+    # Rescan summary
+    if rescan:
+        if changes_found == 0:
+            console.print(f"   [dim]✓ No changes detected[/dim]")
+        else:
+            console.print(f"   [bold red]⚡ {changes_found} change(s) detected![/bold red]")
+
+    # Mark as processed
+    mark_processed(ip)
+
+
+def run_worker(rescan=False):
+    mode = "rescan" if rescan else "discovery"
+    console.print(f"[bold cyan][*] Worker started ({mode} mode), waiting for targets...[/bold cyan]")
     while True:
-        result = r.brpop("targets", timeout=0)
+        result = r.brpop("targets", timeout=5)
         if result:
             target = result[1]
-            process(target.decode())
+            process(target.decode(), rescan=rescan)
+        elif rescan:
+            # In rescan mode, exit when queue is drained
+            console.print("[bold green][✓] Rescan complete, no more targets.[/bold green]")
+            break
 
 if __name__ == "__main__":
     run_worker()
