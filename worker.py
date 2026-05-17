@@ -1,4 +1,5 @@
 import socket
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import ssl
 import requests
 import redis
@@ -93,8 +94,9 @@ def update_relation(ip, rel_type, old_value, new_value, new_btype):
     add_relation(ip, "ip", rel_type, new_value, new_btype)
 
 
-def asn_lookup(ip):
-
+def whois_lookup(ip):
+    asn = None
+    org = None
     try:
         result = subprocess.check_output(
             ["whois", ip],
@@ -102,14 +104,22 @@ def asn_lookup(ip):
         )
 
         for line in result.splitlines():
-
-            if "origin" in line.lower():
-                return line.strip()
-
+            line_lower = line.lower()
+            if not asn and "origin" in line_lower:
+                asn = line.strip()
+            if not org and any(line_lower.startswith(x + ":") for x in ["orgname", "organization", "org-name"]):
+                org = line.split(":", 1)[1].strip()
+                
+        # Second pass for fallbacks if org not found
+        if not org:
+            for line in result.splitlines():
+                line_lower = line.lower()
+                if not org and any(line_lower.startswith(x + ":") for x in ["descr", "netname"]):
+                    org = line.split(":", 1)[1].strip()
     except:
         pass
 
-    return None
+    return {"asn": asn, "org": org}
 
 
 def tls_fingerprint(ip):
@@ -214,17 +224,27 @@ def process(target_val, rescan=False):
     try:
         # Check if target is already an IP
         ipaddress.ip_address(target_val)
-        ip = target_val
+        ips = [target_val]
         domain = None
     except ValueError:
-        # It's a domain, resolve it
+        # It's a domain — resolve ALL A records
         domain = target_val
         try:
-            ip = socket.gethostbyname(domain)
-            add_relation(domain, "domain", "resolves_to", ip, "ip")
+            results = socket.getaddrinfo(domain, None, socket.AF_INET, socket.SOCK_STREAM)
+            ips = list(dict.fromkeys(r[4][0] for r in results))  # unique, order-preserved
+            for ip in ips:
+                add_relation(domain, "domain", "resolves_to", ip, "ip")
         except:
             # Drop if it doesn't resolve
             return
+
+    with ThreadPoolExecutor(max_workers=len(ips)) as pool:
+        futures = {pool.submit(_scan_ip, ip, domain, rescan): ip for ip in ips}
+        for f in as_completed(futures):
+            f.result()  # re-raise any exception
+
+
+def _scan_ip(ip, domain=None, rescan=False):
 
     # Deduplication: skip already-processed IPs in normal mode
     if not rescan and is_processed(ip):
@@ -240,8 +260,10 @@ def process(target_val, rescan=False):
 
     changes_found = 0
 
-    # --- ASN ---
-    asn = asn_lookup(ip)
+    # --- WHOIS (ASN & Organization) ---
+    whois_info = whois_lookup(ip)
+    
+    asn = whois_info.get("asn")
     if asn:
         if rescan and "hosted_on" in existing and existing["hosted_on"] != asn:
             report_change(ip, "ASN", existing["hosted_on"], asn)
@@ -251,6 +273,17 @@ def process(target_val, rescan=False):
             if not rescan:
                 console.print(f"   [yellow]🏢 ASN:[/yellow] {asn}")
             add_relation(ip, "ip", "hosted_on", asn, "asn")
+
+    org = whois_info.get("org")
+    if org:
+        if rescan and "hosted_by" in existing and existing["hosted_by"] != org:
+            report_change(ip, "Hosting Provider", existing["hosted_by"], org)
+            update_relation(ip, "hosted_by", existing["hosted_by"], org, "org")
+            changes_found += 1
+        else:
+            if not rescan:
+                console.print(f"   [yellow]☁️  Hosting Provider:[/yellow] {org}")
+            add_relation(ip, "ip", "hosted_by", org, "org")
 
     # --- TLS ---
     tls = tls_fingerprint(ip)

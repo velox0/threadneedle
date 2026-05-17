@@ -98,15 +98,19 @@ Domain → IP address
 
 If the target from the CT stream is a domain name (not an IP), the worker resolves it via `socket.gethostbyname()`. The `(domain) -[resolves_to]→ (ip)` relationship is written to Neo4j. If resolution fails, the target is silently dropped.
 
-#### Module 2: ASN Lookup
+#### Module 2: ASN & Organization Lookup
 
 ```
-IP → Autonomous System Number
+IP → Autonomous System Number + Hosting Provider
 ```
 
-Runs the system `whois` command against the IP and parses the output for the `origin` field. This identifies which network operator hosts the IP (e.g., `AS13335` = Cloudflare, `AS15169` = Google).
+Runs the system `whois` command against the IP and parses the output. It extracts:
+- The **ASN** (`origin` field) identifying the network operator.
+- The **Organization / Hosting Provider** (`OrgName`, `Organization`, `netname`, or `descr` field) identifying the specific host (e.g., `Amazon Technologies Inc.`, `Google LLC`).
 
-**Graph edge:** `(ip) -[hosted_on]→ (asn)`
+**Graph edges:** 
+- `(ip) -[hosted_on]→ (asn)`
+- `(ip) -[hosted_by]→ (org)`
 
 #### Module 3: TLS Fingerprint
 
@@ -180,6 +184,7 @@ All data is stored as a single node type (`Entity`) with relationships between t
 | `ip`      | `172.67.189.133`                  | An IPv4 address             |
 | `domain`  | `example.com`                     | A domain name from CT logs  |
 | `asn`     | `origin: AS13335`                 | Autonomous System Number    |
+| `org`     | `Amazon Technologies Inc.`        | Hosting Provider / Organization |
 | `tls`     | `('TLS_AES_256_GCM_SHA384', ...)` | Negotiated TLS cipher suite |
 | `favicon` | `277325061`                       | MurmurHash3 of favicon.ico  |
 | `http`    | `cloudflare`                      | HTTP Server header value    |
@@ -188,6 +193,7 @@ All data is stored as a single node type (`Entity`) with relationships between t
 | -------------- | --------------------------- |
 | `resolves_to`  | Domain → IP (DNS)           |
 | `hosted_on`    | IP → ASN (network operator) |
+| `hosted_by`    | IP → Hosting Provider (org) |
 | `tls_cipher`   | IP → TLS cipher suite       |
 | `favicon_hash` | IP → favicon mmh3 hash      |
 | `server`       | IP → HTTP server software   |
