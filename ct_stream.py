@@ -12,21 +12,21 @@ r = redis.Redis(host="localhost", port=6379)
 # Multiple CT log endpoints for redundancy
 CT_LOGS = [
     {
-        "name": "Google Argon 2025h1",
-        "url": "https://ct.googleapis.com/logs/us1/argon2025h1",
+        "name": "Google Argon 2026h1",
+        "url": "https://ct.googleapis.com/logs/us1/argon2026h1",
     },
     {
-        "name": "Google Argon 2025h2",
-        "url": "https://ct.googleapis.com/logs/us1/argon2025h2",
+        "name": "Google Argon 2026h2",
+        "url": "https://ct.googleapis.com/logs/us1/argon2026h2",
     },
     {
-        "name": "Google Xenon 2025h1",
-        "url": "https://ct.googleapis.com/logs/eu1/xenon2025h1",
+        "name": "Google Xenon 2026h1",
+        "url": "https://ct.googleapis.com/logs/eu1/xenon2026h1",
     },
 ]
 
 BATCH_SIZE = 256  # entries per fetch
-BACKLOG = 500    # how far back from the tip to start (instant data)
+BACKLOG = 500  # how far back from the tip to start (instant data)
 
 
 def get_tree_size(log_url):
@@ -73,9 +73,7 @@ def parse_domains(entry):
             return san.value.get_values_for_type(x509.DNSName)
         except x509.ExtensionNotFound:
             # Fall back to common name
-            cn_attrs = cert.subject.get_attributes_for_oid(
-                x509.oid.NameOID.COMMON_NAME
-            )
+            cn_attrs = cert.subject.get_attributes_for_oid(x509.oid.NameOID.COMMON_NAME)
             return [attr.value for attr in cn_attrs] if cn_attrs else []
 
     except Exception:
@@ -87,9 +85,7 @@ def tail_log(log_info):
     log_name = log_info["name"]
     log_url = log_info["url"]
 
-    console.print(
-        f"[bold green]📡 Connecting to CT log:[/bold green] {log_name}"
-    )
+    console.print(f"[bold green]📡 Connecting to CT log:[/bold green] {log_name}")
 
     try:
         tree_size = get_tree_size(log_url)
@@ -105,6 +101,11 @@ def tail_log(log_info):
 
     while True:
         try:
+            # Prevent Redis queue from exploding and eating all RAM
+            if r.llen("targets") >= 1000:
+                time.sleep(2)
+                continue
+
             current_size = get_tree_size(log_url)
 
             if cursor >= current_size:
@@ -135,9 +136,7 @@ def tail_log(log_info):
         except KeyboardInterrupt:
             raise
         except Exception as e:
-            console.print(
-                f"[yellow]⚠ {log_name} poll error: {e}. Retrying...[/yellow]"
-            )
+            console.print(f"[yellow]⚠ {log_name} poll error: {e}. Retrying...[/yellow]")
             time.sleep(3)
 
 

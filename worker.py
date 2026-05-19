@@ -18,18 +18,15 @@ console = Console()
 
 r = redis.Redis(host="localhost", port=6379)
 
-neo = GraphDatabase.driver(
-    "bolt://localhost:7687",
-    auth=("neo4j", "password")
-)
+neo = GraphDatabase.driver("bolt://localhost:7687", auth=("neo4j", "password"))
 
 HEADERS = {
-    "User-Agent": "Mozilla/5.0"
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
 }
 
 # Redis keys
-PROCESSED_SET = "processed"   # set of all IPs we've already scanned
-RESCAN_MODE = False           # toggled by main.py when --rescan is used
+PROCESSED_SET = "processed"  # set of all IPs we've already scanned
+RESCAN_MODE = False  # toggled by main.py when --rescan is used
 
 
 def is_processed(ip):
@@ -72,14 +69,7 @@ def add_relation(a, atype, rel, b, btype):
     """
 
     with neo.session() as s:
-        s.run(
-            query,
-            a=a,
-            b=b,
-            atype=atype,
-            btype=btype,
-            rel=rel
-        )
+        s.run(query, a=a, b=b, atype=atype, btype=btype, rel=rel)
 
 
 def update_relation(ip, rel_type, old_value, new_value, new_btype):
@@ -98,23 +88,25 @@ def whois_lookup(ip):
     asn = None
     org = None
     try:
-        result = subprocess.check_output(
-            ["whois", ip],
-            text=True
-        )
+        result = subprocess.check_output(["whois", ip], text=True, timeout=10)
 
         for line in result.splitlines():
             line_lower = line.lower()
             if not asn and "origin" in line_lower:
                 asn = line.strip()
-            if not org and any(line_lower.startswith(x + ":") for x in ["orgname", "organization", "org-name"]):
+            if not org and any(
+                line_lower.startswith(x + ":")
+                for x in ["orgname", "organization", "org-name"]
+            ):
                 org = line.split(":", 1)[1].strip()
-                
+
         # Second pass for fallbacks if org not found
         if not org:
             for line in result.splitlines():
                 line_lower = line.lower()
-                if not org and any(line_lower.startswith(x + ":") for x in ["descr", "netname"]):
+                if not org and any(
+                    line_lower.startswith(x + ":") for x in ["descr", "netname"]
+                ):
                     org = line.split(":", 1)[1].strip()
     except:
         pass
@@ -125,14 +117,9 @@ def whois_lookup(ip):
 def tls_fingerprint(ip):
 
     try:
-
         ctx = ssl.create_default_context()
 
-        with ctx.wrap_socket(
-            socket.socket(),
-            server_hostname=ip
-        ) as s:
-
+        with ctx.wrap_socket(socket.socket(), server_hostname=ip) as s:
             s.settimeout(5)
             s.connect((ip, 443))
 
@@ -140,10 +127,7 @@ def tls_fingerprint(ip):
 
             cipher = s.cipher()
 
-            return {
-                "issuer": cert.get("issuer"),
-                "cipher": cipher
-            }
+            return {"issuer": cert.get("issuer"), "cipher": cipher}
 
     except:
         return None
@@ -151,24 +135,13 @@ def tls_fingerprint(ip):
 
 def favicon_hash(ip):
 
-    urls = [
-        f"http://{ip}/favicon.ico",
-        f"https://{ip}/favicon.ico"
-    ]
+    urls = [f"http://{ip}/favicon.ico", f"https://{ip}/favicon.ico"]
 
     for url in urls:
-
         try:
-
-            r = requests.get(
-                url,
-                timeout=5,
-                verify=False,
-                headers=HEADERS
-            )
+            r = requests.get(url, timeout=5, verify=False, headers=HEADERS)
 
             if r.status_code == 200:
-
                 h = mmh3.hash(r.content)
 
                 return str(h)
@@ -182,17 +155,9 @@ def favicon_hash(ip):
 def http_fingerprint(ip):
 
     try:
+        r = requests.get(f"http://{ip}", timeout=5, headers=HEADERS)
 
-        r = requests.get(
-            f"http://{ip}",
-            timeout=5,
-            headers=HEADERS
-        )
-
-        return {
-            "server": r.headers.get("Server"),
-            "title": r.text[:100]
-        }
+        return {"server": r.headers.get("Server"), "title": r.text[:100]}
 
     except:
         return None
@@ -201,17 +166,8 @@ def http_fingerprint(ip):
 def scan_ports(ip):
 
     try:
-
         result = subprocess.check_output(
-            [
-                "nmap",
-                "-Pn",
-                "-sV",
-                "--top-ports",
-                "20",
-                ip
-            ],
-            text=True
+            ["nmap", "-Pn", "-sV", "--top-ports", "20", ip], text=True, timeout=20
         )
 
         return result
@@ -230,8 +186,12 @@ def process(target_val, rescan=False):
         # It's a domain — resolve ALL A records
         domain = target_val
         try:
-            results = socket.getaddrinfo(domain, None, socket.AF_INET, socket.SOCK_STREAM)
-            ips = list(dict.fromkeys(r[4][0] for r in results))  # unique, order-preserved
+            results = socket.getaddrinfo(
+                domain, None, socket.AF_INET, socket.SOCK_STREAM
+            )
+            ips = list(
+                dict.fromkeys(r[4][0] for r in results)
+            )  # unique, order-preserved
             for ip in ips:
                 add_relation(domain, "domain", "resolves_to", ip, "ip")
         except:
@@ -254,15 +214,19 @@ def _scan_ip(ip, domain=None, rescan=False):
     existing = {}
     if rescan:
         existing = get_existing_data(ip)
-        console.print(f"[bold yellow]🔄 Re-scanning:[/bold yellow] {ip} {f'[dim](from {domain})[/dim]' if domain else ''}")
+        console.print(
+            f"[bold yellow]🔄 Re-scanning:[/bold yellow] {ip} {f'[dim](from {domain})[/dim]' if domain else ''}"
+        )
     else:
-        console.print(f"[bold cyan]🔍 Scanning Target:[/bold cyan] {ip} {f'[dim](from {domain})[/dim]' if domain else ''}")
+        console.print(
+            f"[bold cyan]🔍 Scanning Target:[/bold cyan] {ip} {f'[dim](from {domain})[/dim]' if domain else ''}"
+        )
 
     changes_found = 0
 
     # --- WHOIS (ASN & Organization) ---
     whois_info = whois_lookup(ip)
-    
+
     asn = whois_info.get("asn")
     if asn:
         if rescan and "hosted_on" in existing and existing["hosted_on"] != asn:
@@ -303,7 +267,9 @@ def _scan_ip(ip, domain=None, rescan=False):
     if fav:
         if rescan and "favicon_hash" in existing and existing["favicon_hash"] != fav:
             report_change(ip, "Favicon Hash", existing["favicon_hash"], fav)
-            update_relation(ip, "favicon_hash", existing["favicon_hash"], fav, "favicon")
+            update_relation(
+                ip, "favicon_hash", existing["favicon_hash"], fav, "favicon"
+            )
             changes_found += 1
         else:
             if not rescan:
@@ -341,7 +307,9 @@ def _scan_ip(ip, domain=None, rescan=False):
         if changes_found == 0:
             console.print(f"   [dim]✓ No changes detected[/dim]")
         else:
-            console.print(f"   [bold red]⚡ {changes_found} change(s) detected![/bold red]")
+            console.print(
+                f"   [bold red]⚡ {changes_found} change(s) detected![/bold red]"
+            )
 
     # Mark as processed
     mark_processed(ip)
@@ -349,7 +317,9 @@ def _scan_ip(ip, domain=None, rescan=False):
 
 def run_worker(rescan=False):
     mode = "rescan" if rescan else "discovery"
-    console.print(f"[bold cyan][*] Worker started ({mode} mode), waiting for targets...[/bold cyan]")
+    console.print(
+        f"[bold cyan][*] Worker started ({mode} mode), waiting for targets...[/bold cyan]"
+    )
     while True:
         result = r.brpop("targets", timeout=5)
         if result:
@@ -357,8 +327,11 @@ def run_worker(rescan=False):
             process(target.decode(), rescan=rescan)
         elif rescan:
             # In rescan mode, exit when queue is drained
-            console.print("[bold green][✓] Rescan complete, no more targets.[/bold green]")
+            console.print(
+                "[bold green][✓] Rescan complete, no more targets.[/bold green]"
+            )
             break
+
 
 if __name__ == "__main__":
     run_worker()
