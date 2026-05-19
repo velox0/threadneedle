@@ -9,7 +9,7 @@ An internet-scale threat reconnaissance and infrastructure graphing pipeline. Th
 ```text
        ┌──────────────────────────────┐
        │  Google CT Log Servers       │
-       │  (Argon 2025h1/h2, Xenon)   │
+       │  (Argon 2026h1/h2, Xenon)    │
        │  RFC 6962 HTTP API           │
        └──────────────┬───────────────┘
                       │ HTTP polling (256 entries/batch)
@@ -31,7 +31,7 @@ An internet-scale threat reconnaissance and infrastructure graphing pipeline. Th
         │           │           │
         │  For each target:     │
         │  ├─ DNS Resolution    │
-        │  ├─ WHOIS → ASN      │
+        │  ├─ WHOIS → ASN       │
         │  ├─ TLS Handshake     │
         │  ├─ Favicon mmh3 Hash │
         │  ├─ HTTP Headers      │
@@ -105,10 +105,12 @@ IP → Autonomous System Number + Hosting Provider
 ```
 
 Runs the system `whois` command against the IP and parses the output. It extracts:
+
 - The **ASN** (`origin` field) identifying the network operator.
 - The **Organization / Hosting Provider** (`OrgName`, `Organization`, `netname`, or `descr` field) identifying the specific host (e.g., `Amazon Technologies Inc.`, `Google LLC`).
 
-**Graph edges:** 
+**Graph edges:**
+
 - `(ip) -[hosted_on]→ (asn)`
 - `(ip) -[hosted_by]→ (org)`
 
@@ -179,15 +181,15 @@ All data is stored as a single node type (`Entity`) with relationships between t
 (:Entity {value, type})  -[:REL {type}]→  (:Entity {value, type})
 ```
 
-| Node Type | Example `value`                   | Description                 |
-| --------- | --------------------------------- | --------------------------- |
-| `ip`      | `172.67.189.133`                  | An IPv4 address             |
-| `domain`  | `example.com`                     | A domain name from CT logs  |
-| `asn`     | `origin: AS13335`                 | Autonomous System Number    |
+| Node Type | Example `value`                   | Description                     |
+| --------- | --------------------------------- | ------------------------------- |
+| `ip`      | `172.67.189.133`                  | An IPv4 address                 |
+| `domain`  | `example.com`                     | A domain name from CT logs      |
+| `asn`     | `origin: AS13335`                 | Autonomous System Number        |
 | `org`     | `Amazon Technologies Inc.`        | Hosting Provider / Organization |
-| `tls`     | `('TLS_AES_256_GCM_SHA384', ...)` | Negotiated TLS cipher suite |
-| `favicon` | `277325061`                       | MurmurHash3 of favicon.ico  |
-| `http`    | `cloudflare`                      | HTTP Server header value    |
+| `tls`     | `('TLS_AES_256_GCM_SHA384', ...)` | Negotiated TLS cipher suite     |
+| `favicon` | `277325061`                       | MurmurHash3 of favicon.ico      |
+| `http`    | `cloudflare`                      | HTTP Server header value        |
 
 | Relationship   | Meaning                     |
 | -------------- | --------------------------- |
@@ -246,10 +248,10 @@ This will:
 
 ### CLI Flags
 
-| Flag              | Description                                      |
-| ----------------- | ------------------------------------------------ |
+| Flag              | Description                                       |
+| ----------------- | ------------------------------------------------- |
 | `--target <host>` | Scan a specific domain or IP and add to the graph |
-| `--rescan`        | Re-scan all known targets for changes            |
+| `--rescan`        | Re-scan all known targets for changes             |
 | `--workers N`     | Number of parallel worker processes (default: 3)  |
 
 ---
