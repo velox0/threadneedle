@@ -1,5 +1,12 @@
 # Threat Infrastructure Graphing Stack
 
+<div align="center">
+<img width="300px" src="./visualisation.png" />
+
+<i>neo4j graph visualization of CT log-derived infrastructure</i>
+
+</div>
+
 An internet-scale threat reconnaissance and infrastructure graphing pipeline. This stack discovers domains from global Certificate Transparency logs in real-time, resolves them, fingerprints the underlying infrastructure, and builds a continuously updating relationship graph in Neo4j for cluster analysis.
 
 ---
@@ -25,7 +32,7 @@ An internet-scale threat reconnaissance and infrastructure graphing pipeline. Th
                       │ BRPOP (blocking pop)
           ┌───────────┼───────────┐
           │           │           │
-   ┌──────▼──┐ ┌─────▼───┐ ┌────▼────┐
+   ┌──────▼──┐ ┌─────-▼──┐ ┌─--───▼──┐
    │Worker 1 │ │Worker 2 │ │Worker 3 │   (parallel multiprocessing)
    └────┬────┘ └────┬────┘ └────┬────┘
         │           │           │
